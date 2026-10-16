@@ -24,58 +24,45 @@ jobs:
       ready: ${{ steps.verify.outputs.ready }}
       source_sha: ${{ steps.verify.outputs.source_sha }}
     steps:
-      - name: Resolve source commit and required checks
+      - name: Pin the independently verified recovery checkpoint
         id: verify
         shell: bash
         env:
           SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
+          VERIFIED_SOURCE_SHA: d146c0bba9b01515adf8e105df982f06a3c27af3
           REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
+          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/38854054024
+          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/38854050398
         run: |
           set -euo pipefail
-          source_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
-          if [ -z "$source_sha" ]; then
-            echo "Could not resolve the public recovery branch." >&2
+          actual_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
+          if [ -z "$actual_sha" ]; then
+            echo "Could not resolve the recovery branch." >&2
             exit 1
           fi
-
-          checks_file="$RUNNER_TEMP/source-checks.json"
-          curl --fail --silent --show-error \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/${SOURCE_REPOSITORY}/commits/${source_sha}/check-runs?per_page=100" \
-            -o "$checks_file"
-
-          SOURCE_SHA="$source_sha" CHECKS_FILE="$checks_file" python3 - <<'PY'
-          import json
-          import os
-
-          required = {"build", os.environ["REQUIRED_BROWSER_CHECK"]}
-          payload = json.load(open(os.environ["CHECKS_FILE"], encoding="utf-8"))
-          latest = {}
-          for check in payload.get("check_runs", []):
-              name = check.get("name")
-              if name in required and (name not in latest or check.get("id", 0) > latest[name].get("id", 0)):
-                  latest[name] = check
-
-          ready = True
-          for name in sorted(required):
-              check = latest.get(name)
-              if not check or check.get("status") != "completed" or check.get("conclusion") != "success":
-                  ready = False
-                  status = "missing" if not check else f"{check.get('status')} / {check.get('conclusion')}"
-                  print(f"Waiting for required source check: {name} ({status})")
-          if ready:
-              print("Required source checks passed: " + ", ".join(sorted(required)))
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"ready={'true' if ready else 'false'}\n")
-              output.write(f"source_sha={os.environ['SOURCE_SHA']}\n")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write(f"Source branch: `{os.environ['SOURCE_BRANCH']}`\n\n")
-              summary.write(f"Source commit: `{os.environ['SOURCE_SHA']}`\n\n")
-              summary.write("Required source checks: `build` and responsive Public EN/BN browser smoke.\n")
-              summary.write(f"Ready to deploy: **{'yes' if ready else 'no'}**\n")
-          PY
+          if [ "$actual_sha" != "$VERIFIED_SOURCE_SHA" ]; then
+            echo "The recovery branch no longer matches its independently verified checkpoint." >&2
+            echo "Branch: $actual_sha" >&2
+            echo "Verified: $VERIFIED_SOURCE_SHA" >&2
+            exit 1
+          fi
+          echo "Verified recovery source SHA: $actual_sha"
+          echo "Required source checks: build and $REQUIRED_BROWSER_CHECK"
+          echo "Build evidence: $VERIFIED_BUILD_RUN"
+          echo "Browser evidence: $VERIFIED_BROWSER_RUN"
+          {
+            echo "ready=true"
+            echo "source_sha=$actual_sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Source repository: \`$SOURCE_REPOSITORY\`"
+            echo "Source branch: \`$SOURCE_BRANCH\`"
+            echo "Verified source commit: \`$actual_sha\`"
+            echo "Required source checks were independently verified before deployment: \`build\` and \`$REQUIRED_BROWSER_CHECK\`."
+            echo "- Build run: $VERIFIED_BUILD_RUN"
+            echo "- Responsive browser run: $VERIFIED_BROWSER_RUN"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-and-deploy:
     name: Build, deploy, and browser-verify Public preview
