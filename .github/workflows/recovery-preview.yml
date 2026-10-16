@@ -1,0 +1,248 @@
+name: Public recovery preview
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: public-recovery-preview
+  cancel-in-progress: true
+
+jobs:
+  source-check:
+    name: Check latest Public recovery source
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.verify.outputs.ready }}
+      source_sha: ${{ steps.verify.outputs.source_sha }}
+    steps:
+      - name: Resolve source commit and required checks
+        id: verify
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
+          SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
+          REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
+        run: |
+          set -euo pipefail
+          source_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
+          if [ -z "$source_sha" ]; then
+            echo "Could not resolve the public recovery branch." >&2
+            exit 1
+          fi
+
+          checks_file="$RUNNER_TEMP/source-checks.json"
+          curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/commits/${source_sha}/check-runs?per_page=100" \
+            -o "$checks_file"
+
+          SOURCE_SHA="$source_sha" CHECKS_FILE="$checks_file" python3 - <<'PY'
+          import json
+          import os
+
+          required = {"build", os.environ["REQUIRED_BROWSER_CHECK"]}
+          payload = json.load(open(os.environ["CHECKS_FILE"], encoding="utf-8"))
+          latest = {}
+          for check in payload.get("check_runs", []):
+              name = check.get("name")
+              if name in required and (name not in latest or check.get("id", 0) > latest[name].get("id", 0)):
+                  latest[name] = check
+
+          ready = True
+          for name in sorted(required):
+              check = latest.get(name)
+              if not check or check.get("status") != "completed" or check.get("conclusion") != "success":
+                  ready = False
+                  status = "missing" if not check else f"{check.get('status')} / {check.get('conclusion')}"
+                  print(f"Waiting for required source check: {name} ({status})")
+          if ready:
+              print("Required source checks passed: " + ", ".join(sorted(required)))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"ready={'true' if ready else 'false'}\n")
+              output.write(f"source_sha={os.environ['SOURCE_SHA']}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"Source branch: `{os.environ['SOURCE_BRANCH']}`\n\n")
+              summary.write(f"Source commit: `{os.environ['SOURCE_SHA']}`\n\n")
+              summary.write("Required source checks: `build` and responsive Public EN/BN browser smoke.\n")
+              summary.write(f"Ready to deploy: **{'yes' if ready else 'no'}**\n")
+          PY
+
+  build-and-deploy:
+    name: Build, deploy, and browser-verify Public preview
+    needs: source-check
+    if: needs.source-check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout preview workflow
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch the verified Public recovery source
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
+          SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
+          EXPECTED_SOURCE_SHA: ${{ needs.source-check.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch "$SOURCE_BRANCH" "https://github.com/${SOURCE_REPOSITORY}.git" app-source
+          actual_sha="$(git -C app-source rev-parse HEAD)"
+          if [ "$actual_sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo "The source branch changed after its checks were read; wait for the next scheduled run." >&2
+            exit 1
+          fi
+          echo "Verified source SHA: $actual_sha"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-source/package-lock.json
+
+      - name: Install Public dependencies
+        working-directory: app-source
+        run: npm ci
+
+      - name: Build with backend disabled
+        working-directory: app-source
+        env:
+          VITE_BASE_PATH: /sobaike-janao-public-recovery-preview/
+        run: npm run build
+
+      - name: Add source evidence and static Pages fallback
+        working-directory: app-source
+        env:
+          SOURCE_SHA: ${{ needs.source-check.outputs.source_sha }}
+          SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
+          SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
+        run: |
+          set -euo pipefail
+          if grep -R -E 'ahiaymyqfmyyrjkwgvhi\.supabase\.co|sb_publishable_3wqaYyxPJ6spRNS0jNOi4w_69Jqc3-b' dist/assets; then
+            echo "A production Supabase endpoint or key was found in the preview bundle." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          dist = Path("dist")
+          checkpoint = {
+              "application": "Public",
+              "sourceRepository": os.environ["SOURCE_REPOSITORY"],
+              "sourceBranch": os.environ["SOURCE_BRANCH"],
+              "sourceCommit": os.environ["SOURCE_SHA"],
+              "sourceChecks": ["build", "Public responsive EN/BN browser smoke"],
+              "backend": "disabled; no Supabase endpoint or credentials supplied",
+              "deployedAt": datetime.now(timezone.utc).isoformat(),
+          }
+          (dist / "recovery-checkpoint.json").write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
+          index = dist / "index.html"
+          html = index.read_text(encoding="utf-8")
+          marker = f'<meta name="sobaike-recovery-source-sha" content="{os.environ["SOURCE_SHA"]}">'
+          if "</head>" not in html:
+              raise SystemExit("Built index has no head section.")
+          index.write_text(html.replace("</head>", f"  {marker}\n</head>", 1), encoding="utf-8")
+          (dist / "404.html").write_bytes(index.read_bytes())
+          PY
+          test -s dist/index.html
+          test -s dist/404.html
+          test -s dist/recovery-checkpoint.json
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload the built Public preview
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app-source/dist
+
+      - name: Deploy the Public preview
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify deployed HTML, assets, and source SHA
+        shell: bash
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+          SOURCE_SHA: ${{ needs.source-check.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$SITE_URL"
+          export SITE_URL SOURCE_SHA
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from urllib.parse import urljoin
+          from urllib.request import urlopen
+
+          site = os.environ["SITE_URL"]
+          expected = os.environ["SOURCE_SHA"]
+          with urlopen(site, timeout=30) as response:
+              if response.status != 200:
+                  raise SystemExit(f"Preview index returned HTTP {response.status}")
+              html = response.read().decode("utf-8")
+          if expected not in html:
+              raise SystemExit("Live index does not identify the expected recovery SHA")
+
+          with urlopen(urljoin(site, "recovery-checkpoint.json"), timeout=30) as response:
+              checkpoint = json.load(response)
+          if checkpoint.get("sourceCommit") != expected or checkpoint.get("application") != "Public":
+              raise SystemExit("Live checkpoint metadata does not match the expected Public source SHA")
+
+          assets = re.findall(r'(?:src|href)="([^"]+\.(?:js|css)(?:\?[^"]*)?)"', html)
+          if not assets:
+              raise SystemExit("Live index contains no built JavaScript or CSS assets")
+          for asset in assets:
+              with urlopen(urljoin(site, asset), timeout=30) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"Live asset returned HTTP {response.status}: {asset}")
+          print(f"HTTP 200: {site}")
+          print(f"Verified {len(assets)} live JS/CSS assets and source SHA {expected}")
+          PY
+
+      - name: Install browser smoke runner
+        working-directory: app-source
+        run: |
+          npm install --no-save --package-lock=false playwright@1.62.1
+          npx playwright install --with-deps chromium
+
+      - name: Browser-verify the live Public preview in English and Bengali
+        working-directory: app-source
+        env:
+          RECOVERY_BROWSER_APP: public
+          RECOVERY_BROWSER_BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: node tests/recovery-browser-smoke.mjs
+
+      - name: Record deployed checkpoint evidence
+        if: success()
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+          SOURCE_SHA: ${{ needs.source-check.outputs.source_sha }}
+        run: |
+          {
+            echo "## Public Recovery Preview: DEPLOYED and browser-verified"
+            echo "- URL: $SITE_URL"
+            echo "- Source SHA: $SOURCE_SHA"
+            echo "- Backend integration: not configured; this is a static UI preview only."
+          } >> "$GITHUB_STEP_SUMMARY"
