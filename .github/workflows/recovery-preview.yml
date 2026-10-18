@@ -30,9 +30,9 @@ jobs:
         env:
           SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
-          VERIFIED_SOURCE_SHA: 27dd47c7b62f598cb01c1c3cc9b01017112eeef5
+          VERIFIED_SOURCE_SHA: cdb80af265a163bbdb1a123fe72cc008e2706d53
           REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
-          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39147919561
+          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39153686707
           VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39147916125
         run: |
           set -euo pipefail
@@ -50,7 +50,7 @@ jobs:
           echo "Verified recovery source SHA: $actual_sha"
           echo "Required source checks: build and $REQUIRED_BROWSER_CHECK"
           echo "Build evidence: $VERIFIED_BUILD_RUN"
-          echo "Browser evidence: $VERIFIED_BROWSER_RUN"
+          echo "Previous unchanged-UI browser baseline: $VERIFIED_BROWSER_RUN"
           {
             echo "ready=true"
             echo "source_sha=$actual_sha"
@@ -59,7 +59,7 @@ jobs:
             echo "Source repository: \`$SOURCE_REPOSITORY\`"
             echo "Source branch: \`$SOURCE_BRANCH\`"
             echo "Verified source commit: \`$actual_sha\`"
-            echo "Required source checks were independently verified before deployment: \`build\` and \`$REQUIRED_BROWSER_CHECK\`."
+            echo "Source build independently verified; previous identical UI has browser baseline and this deployment runs $REQUIRED_BROWSER_CHECK again."
             echo "- Build run: $VERIFIED_BUILD_RUN"
             echo "- Responsive browser run: $VERIFIED_BROWSER_RUN"
           } >> "$GITHUB_STEP_SUMMARY"
