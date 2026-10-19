@@ -155,6 +155,16 @@ jobs:
           test -s dist/404.html
           test -s dist/recovery-checkpoint.json
 
+      - name: Attach unlinked and noindex synthetic News Intake QA pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app-source/dist/qa-news/articles
+          cp fixtures/news-intake/index.html app-source/dist/qa-news/index.html
+          cp fixtures/news-intake/articles/20261019-dhaka-road-collision.html app-source/dist/qa-news/articles/
+          grep -q 'noindex,nofollow' app-source/dist/qa-news/index.html
+          grep -q 'TEST FIXTURE' app-source/dist/qa-news/articles/20261019-dhaka-road-collision.html
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
