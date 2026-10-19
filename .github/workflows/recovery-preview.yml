@@ -30,11 +30,11 @@ jobs:
         env:
           SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
-          VERIFIED_SOURCE_SHA: b36682578e99a87d71a939499e2b045de20de257
+          VERIFIED_SOURCE_SHA: 178e44a999d99fa2c3572fdc14f19701c42d14f7
           REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
-          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285418829
-          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285410958
-          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285410983
+          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298187717
+          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298179130
+          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298178743
         run: |
           set -euo pipefail
           actual_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
@@ -244,8 +244,21 @@ jobs:
               with urlopen(urljoin(site, asset), timeout=30) as response:
                   if response.status != 200:
                       raise SystemExit(f"Live asset returned HTTP {response.status}: {asset}")
+          hero_images = [
+              "illustrations/services/harassment-hero-public-harassment-v02.jpg",
+              "illustrations/services/rickshaw-hero-illegal-charging-station-v02.jpg",
+              "illustrations/services/extortion-hero-shopkeeper-coercion-v02.jpg",
+              "illustrations/services/load-shedding-hero-family-blackout-v01.jpg",
+              "illustrations/services/public-safety-hero-rickshaw-snatching-reconstructed-v01.jpg",
+              "illustrations/services/road-transport-hero-broken-road-rickshaw-reconstructed-v01.jpg",
+              "illustrations/services/illegal-occupation-hero-footpath-encroachment-reconstructed-v01.jpg",
+          ]
+          for asset in hero_images:
+              with urlopen(urljoin(site, asset), timeout=30) as response:
+                  if response.status != 200 or not response.headers.get("Content-Type", "").startswith("image/jpeg"):
+                      raise SystemExit(f"Live hero image unavailable or wrong type: {asset}")
           print(f"HTTP 200: {site}")
-          print(f"Verified {len(assets)} live JS/CSS assets and source SHA {expected}")
+          print(f"Verified {len(assets)} live JS/CSS assets, {len(hero_images)} hero images, and source SHA {expected}")
           PY
 
       - name: Install browser smoke runner
