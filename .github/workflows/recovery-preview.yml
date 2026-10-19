@@ -30,11 +30,11 @@ jobs:
         env:
           SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
-          VERIFIED_SOURCE_SHA: 61b30d57c7a87c660eb259f78450293bc29ab90a
+          VERIFIED_SOURCE_SHA: b36682578e99a87d71a939499e2b045de20de257
           REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
-          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39214927476
-          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39214922460
-          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39214922468
+          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285418829
+          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285410958
+          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39285410983
         run: |
           set -euo pipefail
           actual_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
@@ -51,7 +51,7 @@ jobs:
           echo "Verified recovery source SHA: $actual_sha"
           echo "Required source checks: build and $REQUIRED_BROWSER_CHECK"
           echo "Build evidence: $VERIFIED_BUILD_RUN"
-          echo "Verified Phase11 browser run: $VERIFIED_BROWSER_RUN"
+          echo "Verified source browser run: $VERIFIED_BROWSER_RUN"
           {
             echo "ready=true"
             echo "source_sha=$actual_sha"
@@ -72,6 +72,9 @@ jobs:
     if: needs.source-check.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      VITE_SUPABASE_URL: https://ahiaymyqfmyyrjkwgvhi.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_3wqaYyxPJ6spRNS0jNOi4w_69Jqc3-b
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -108,7 +111,7 @@ jobs:
         working-directory: app-source
         run: npm ci
 
-      - name: Build with backend disabled
+      - name: Build with production Supabase publishable client
         working-directory: app-source
         env:
           VITE_BASE_PATH: /sobaike-janao-public-recovery-preview/
@@ -122,8 +125,16 @@ jobs:
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
         run: |
           set -euo pipefail
-          if grep -R -E 'ahiaymyqfmyyrjkwgvhi\.supabase\.co|sb_publishable_3wqaYyxPJ6spRNS0jNOi4w_69Jqc3-b' dist/assets; then
-            echo "A production Supabase endpoint or key was found in the preview bundle." >&2
+          if ! grep -R -F -q "$VITE_SUPABASE_URL" dist/assets; then
+            echo "The approved production Supabase endpoint is missing from the bundle." >&2
+            exit 1
+          fi
+          if ! grep -R -F -q "$VITE_SUPABASE_PUBLISHABLE_KEY" dist/assets; then
+            echo "The approved public browser key is missing from the bundle." >&2
+            exit 1
+          fi
+          if grep -R -E -q 'sb_secret_[A-Za-z0-9_-]+' dist/assets; then
+            echo "A non-public Supabase secret is present in the browser bundle." >&2
             exit 1
           fi
           python3 - <<'PY'
@@ -139,7 +150,7 @@ jobs:
               "sourceBranch": os.environ["SOURCE_BRANCH"],
               "sourceCommit": os.environ["SOURCE_SHA"],
               "sourceChecks": ["build", "Public responsive EN/BN browser smoke"],
-              "backend": "disabled; no Supabase endpoint or credentials supplied",
+              "backend": "production Supabase via browser publishable client, RLS, and JWT authorization",
               "deployedAt": datetime.now(timezone.utc).isoformat(),
           }
           (dist / "recovery-checkpoint.json").write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
@@ -164,6 +175,23 @@ jobs:
           cp fixtures/news-intake/articles/20261019-dhaka-road-collision.html app-source/dist/qa-news/articles/
           grep -q 'noindex,nofollow' app-source/dist/qa-news/index.html
           grep -q 'TEST FIXTURE' app-source/dist/qa-news/articles/20261019-dhaka-road-collision.html
+
+      - name: Verify live Supabase read RPC and Public write-gateway CORS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --output /dev/null --connect-timeout 10 --max-time 60 \
+            --request POST --header "apikey: $VITE_SUPABASE_PUBLISHABLE_KEY" \
+            --header 'Content-Type: application/json' --data '{}' \
+            "$VITE_SUPABASE_URL/rest/v1/rpc/get_public_published_reports"
+          cors_headers="$(curl --fail --silent --show-error --include --request OPTIONS \
+            --header 'Origin: https://shihab-tech04.github.io' \
+            --header 'Access-Control-Request-Method: POST' \
+            "$VITE_SUPABASE_URL/functions/v1/public-write-gateway")"
+          if ! printf '%s' "$cors_headers" | tr -d '\r' | grep -Fiq 'access-control-allow-origin: https://shihab-tech04.github.io'; then
+            echo 'Public write-gateway does not permit the GitHub Pages origin.' >&2
+            exit 1
+          fi
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -231,6 +259,7 @@ jobs:
         env:
           RECOVERY_BROWSER_APP: public
           RECOVERY_BROWSER_BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          RECOVERY_EXPECT_SUPABASE_HOST: ahiaymyqfmyyrjkwgvhi.supabase.co
         run: node tests/recovery-browser-smoke.mjs
 
       - name: Record deployed checkpoint evidence
@@ -243,5 +272,5 @@ jobs:
             echo "## Public Recovery Preview: DEPLOYED and browser-verified"
             echo "- URL: $SITE_URL"
             echo "- Source SHA: $SOURCE_SHA"
-            echo "- Backend integration: not configured; this is a static UI preview only."
+            echo "- Backend integration: production Supabase publishable client (restricted by RLS and JWT)."
           } >> "$GITHUB_STEP_SUMMARY"
