@@ -30,11 +30,11 @@ jobs:
         env:
           SOURCE_REPOSITORY: shihab-tech04/Sobaike-janao-public
           SOURCE_BRANCH: recovery/2026-10-15-public-write-gateway
-          VERIFIED_SOURCE_SHA: 178e44a999d99fa2c3572fdc14f19701c42d14f7
+          VERIFIED_SOURCE_SHA: bd228c038f634b13c4f2e10cdfb9302ffc342069
           REQUIRED_BROWSER_CHECK: Public responsive EN/BN browser smoke
-          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298187717
-          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298179130
-          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39298178743
+          VERIFIED_BUILD_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39299869863
+          VERIFIED_BROWSER_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39299863610
+          VERIFIED_SQL_RUN: https://github.com/shihab-tech04/Sobaike-janao-public/actions/runs/39299863688
         run: |
           set -euo pipefail
           actual_sha="$(git ls-remote "https://github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${SOURCE_BRANCH}" | awk 'NR == 1 { print $1 }')"
